@@ -34,6 +34,7 @@ ALLOWED_HOSTS = []
 INSTALLED_APPS = [
     "apps.fuel_prices.apps.FuelPricesConfig",
     "apps.locations.apps.LocationsConfig",
+    "apps.routes.apps.RoutesConfig",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -82,12 +83,23 @@ NOMINATIM_USER_AGENT = os.environ.get(
 NOMINATIM_TIMEOUT = 10
 LOCATION_CACHE_TTL = 24 * 60 * 60
 LOCATION_MISS_CACHE_TTL = 5 * 60
+ORS_API_KEY = os.environ.get("ORS_API_KEY", "")
+ORS_DIRECTIONS_URL = os.environ.get(
+    "ORS_DIRECTIONS_URL", "https://api.heigit.org/openrouteservice/v2/directions"
+)
+ORS_TIMEOUT = 30
+ROUTE_CACHE_TTL = 60 * 60
 CACHES = {
     "default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"},
     "locations": {
         "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
         "LOCATION": "request-locations",
         "OPTIONS": {"MAX_ENTRIES": 1000},
+    },
+    "routes": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "driving-routes",
+        "OPTIONS": {"MAX_ENTRIES": 64},
     },
 }
 

@@ -1,8 +1,7 @@
-import json
-
-from django.core.exceptions import RequestDataTooBig
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
+
+from apps.common.http import error_response, provider_error_response, read_json_post
 
 from .services.geocoding import (
     LocationNotFound,
@@ -12,38 +11,12 @@ from .services.geocoding import (
 )
 
 
-def error_response(code, message, status, *, field=None, **details):
-    error = {"code": code, "message": message}
-    if field:
-        error["field"] = field
-    error.update(details)
-    return JsonResponse({"error": error}, status=status)
-
-
 # This read-only JSON API neither uses cookie authentication nor changes user data.
 @csrf_exempt
 def resolve_locations(request):
-    if request.method != "POST":
-        response = error_response(
-            "method_not_allowed", "Use POST with a JSON body.", 405
-        )
-        response["Allow"] = "POST"
-        return response
-    if request.content_type != "application/json":
-        return error_response(
-            "unsupported_media_type", "Use Content-Type: application/json.", 415
-        )
-    try:
-        body = request.body
-        if len(body) > 8192:
-            raise RequestDataTooBig
-        payload = json.loads(body)
-    except RequestDataTooBig:
-        return error_response(
-            "payload_too_large", "Request body must be at most 8 KB.", 413
-        )
-    except ValueError, UnicodeError, RecursionError:
-        return error_response("invalid_json", "Provide a valid JSON object.", 400)
+    payload, error = read_json_post(request)
+    if error is not None:
+        return error
     if not isinstance(payload, dict) or set(payload) != {"start", "destination"}:
         return error_response(
             "invalid_fields", "Provide exactly start and destination.", 400
@@ -64,17 +37,7 @@ def resolve_locations(request):
         except LocationNotFound as exc:
             return error_response("location_not_found", str(exc), 422, field=field)
         except ProviderError as exc:
-            details = {"reason": exc.reason}
-            if exc.provider_status is not None:
-                details["provider_status"] = exc.provider_status
-            if exc.retry_after is not None:
-                details["retry_after"] = exc.retry_after
-            response = error_response(
-                "geocoding_unavailable", str(exc), exc.status, field=field, **details
-            )
-            if exc.retry_after is not None:
-                response["Retry-After"] = str(exc.retry_after)
-            return response
+            return provider_error_response(exc, "geocoding_unavailable", field=field)
     return JsonResponse(
         {
             **locations,
