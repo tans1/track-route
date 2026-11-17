@@ -20,10 +20,12 @@ class CensusPlacesTests(unittest.TestCase):
         return CensusPlaces(self.path)
 
     def test_matches_city_state_and_preserves_coordinate_precision(self):
-        gazetteer = self.gazetteer([
-            ["TX", "4800001", "Paris city", "+33.660938", "-95.555513"],
-            ["IL", "1700001", "Paris city", "39.6111", "-87.6961"],
-        ])
+        gazetteer = self.gazetteer(
+            [
+                ["TX", "4800001", "Paris city", "+33.660938", "-95.555513"],
+                ["IL", "1700001", "Paris city", "39.6111", "-87.6961"],
+            ]
+        )
         result = gazetteer.lookup("PARIS", " tx ")
         self.assertEqual(result["source_id"], "4800001")
         self.assertEqual(result["latitude"], "+33.660938")
@@ -49,10 +51,12 @@ class CensusPlacesTests(unittest.TestCase):
                 self.assertEqual(place_name(name), expected)
 
     def test_keeps_ambiguous_city_and_cdp_unresolved(self):
-        gazetteer = self.gazetteer([
-            ["NY", "1", "Example city", "40", "-74"],
-            ["NY", "2", "Example CDP", "43", "-77"],
-        ])
+        gazetteer = self.gazetteer(
+            [
+                ["NY", "1", "Example city", "40", "-74"],
+                ["NY", "2", "Example CDP", "43", "-77"],
+            ]
+        )
         result = gazetteer.lookup("Example", "NY")
         self.assertEqual(result["status"], "unresolved")
         self.assertEqual(result["reason"], "ambiguous_city")
@@ -66,18 +70,26 @@ class CensusPlacesTests(unittest.TestCase):
         self.assertEqual(gazetteer.lookup("Other", "TX")["reason"], "city_not_found")
 
     def test_handles_tab_delimited_gazetteer(self):
-        gazetteer = self.gazetteer([["TX", "1", "Example town", "30", "-97"]], delimiter="\t")
+        gazetteer = self.gazetteer(
+            [["TX", "1", "Example town", "30", "-97"]], delimiter="\t"
+        )
         self.assertEqual(gazetteer.lookup("Example", "TX")["latitude"], "30")
 
     def test_renamed_archive_finds_the_official_national_member(self):
         with zipfile.ZipFile(self.path, "w") as archive:
-            archive.writestr("2025_Gaz_place_national.txt",
-                             "USPS|GEOID|NAME|INTPTLAT|INTPTLONG\nTX|1|Example town|30|-97\n")
-        self.assertEqual(CensusPlaces(self.path).lookup("Example", "TX")["latitude"], "30")
+            archive.writestr(
+                "2025_Gaz_place_national.txt",
+                "USPS|GEOID|NAME|INTPTLAT|INTPTLONG\nTX|1|Example town|30|-97\n",
+            )
+        self.assertEqual(
+            CensusPlaces(self.path).lookup("Example", "TX")["latitude"], "30"
+        )
 
     def test_rejects_bad_coordinate_and_missing_record_fields(self):
-        for row in (["TX", "1", "Example town", "nan", "-97"],
-                    ["TX", "1", "Example town", "30"]):
+        for row in (
+            ["TX", "1", "Example town", "nan", "-97"],
+            ["TX", "1", "Example town", "30"],
+        ):
             with self.subTest(row=row):
                 with self.assertRaises(ValueError):
                     self.gazetteer([row])

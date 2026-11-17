@@ -16,13 +16,26 @@ from apps.fuel_prices.services.geo_utils import US_CODES, city_key
 
 
 MUNICIPAL_SUFFIXES = (
-    "consolidated government (balance)", "unified government (balance)",
-    "metro government (balance)", "city (balance)", "city and borough",
-    "metropolitan government", "consolidated government", "unified government",
-    "urban county", "municipality", "corporation", "borough", "village",
-    "city", "town", "CDP",
+    "consolidated government (balance)",
+    "unified government (balance)",
+    "metro government (balance)",
+    "city (balance)",
+    "city and borough",
+    "metropolitan government",
+    "consolidated government",
+    "unified government",
+    "urban county",
+    "municipality",
+    "corporation",
+    "borough",
+    "village",
+    "city",
+    "town",
+    "CDP",
 )
-SUFFIX = re.compile(r"\s+(?:" + "|".join(re.escape(s) for s in MUNICIPAL_SUFFIXES) + r")$")
+SUFFIX = re.compile(
+    r"\s+(?:" + "|".join(re.escape(s) for s in MUNICIPAL_SUFFIXES) + r")$"
+)
 
 
 def place_name(name: str) -> str:
@@ -43,10 +56,15 @@ class CensusPlaces:
         with zipfile.ZipFile(path) as archive:
             member_name = f"{path.stem}.txt"
             if member_name not in archive.namelist():
-                candidates = [name for name in archive.namelist()
-                              if name.endswith("_Gaz_place_national.txt")]
+                candidates = [
+                    name
+                    for name in archive.namelist()
+                    if name.endswith("_Gaz_place_national.txt")
+                ]
                 if len(candidates) != 1:
-                    raise ValueError("Census places ZIP must contain one national places text file")
+                    raise ValueError(
+                        "Census places ZIP must contain one national places text file"
+                    )
                 member_name = candidates[0]
             with archive.open(member_name) as member:
                 source = io.TextIOWrapper(member, encoding="utf-8-sig")
@@ -64,28 +82,45 @@ class CensusPlaces:
                     state = row["USPS"].strip().upper()
                     if state not in US_CODES:
                         continue
-                    latitude, longitude = row["INTPTLAT"].strip(), row["INTPTLONG"].strip()
+                    latitude, longitude = (
+                        row["INTPTLAT"].strip(),
+                        row["INTPTLONG"].strip(),
+                    )
                     try:
                         lat, lon = float(latitude), float(longitude)
                     except ValueError as exc:
                         raise ValueError("Invalid Census places coordinates") from exc
-                    if not (math.isfinite(lat) and math.isfinite(lon)
-                            and -90 <= lat <= 90 and -180 <= lon <= 180):
+                    if not (
+                        math.isfinite(lat)
+                        and math.isfinite(lon)
+                        and -90 <= lat <= 90
+                        and -180 <= lon <= 180
+                    ):
                         raise ValueError("Census places coordinates out of range")
                     name, source_id = row["NAME"].strip(), row["GEOID"].strip()
                     if not source_id or not name:
                         raise ValueError("Census places record lacks identity")
                     result = {
-                        "source_id": source_id, "matched_name": name, "country": "US",
-                        "state": state, "latitude": latitude, "longitude": longitude,
+                        "source_id": source_id,
+                        "matched_name": name,
+                        "country": "US",
+                        "state": state,
+                        "latitude": latitude,
+                        "longitude": longitude,
                     }
-                    self._places[(state, city_key(place_name(name)))][source_id] = result
+                    self._places[(state, city_key(place_name(name)))][source_id] = (
+                        result
+                    )
                     self._full_names[(state, city_key(name))][source_id] = result
 
     def lookup(self, city: str, state: str) -> dict:
         base = {
-            "latitude": "", "longitude": "", "status": "unresolved",
-            "provider": "us_census_gazetteer", "source_id": "", "matched_name": "",
+            "latitude": "",
+            "longitude": "",
+            "status": "unresolved",
+            "provider": "us_census_gazetteer",
+            "source_id": "",
+            "matched_name": "",
         }
         state = state.strip().upper()
         if state not in US_CODES:
@@ -98,10 +133,16 @@ class CensusPlaces:
             return {**base, "reason": "city_not_found"}
         if len(candidates) > 1:
             return {
-                **base, "reason": "ambiguous_city",
-                "candidates": [candidates[source_id] for source_id in sorted(candidates)],
+                **base,
+                "reason": "ambiguous_city",
+                "candidates": [
+                    candidates[source_id] for source_id in sorted(candidates)
+                ],
             }
         return {
-            **base, **next(iter(candidates.values())), "status": "city_fallback",
-            "reason": "unique_census_place", "coordinate_kind": "representative_place_internal_point",
+            **base,
+            **next(iter(candidates.values())),
+            "status": "city_fallback",
+            "reason": "unique_census_place",
+            "coordinate_kind": "representative_place_internal_point",
         }

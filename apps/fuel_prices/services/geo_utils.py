@@ -19,6 +19,11 @@ def city_key(value: str) -> str:
 def coordinates(latitude, longitude):
     try:
         lat, lon = float(latitude), float(longitude)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return False
-    return math.isfinite(lat) and math.isfinite(lon) and -90 <= lat <= 90 and -180 <= lon <= 180
+    return (
+        math.isfinite(lat)
+        and math.isfinite(lon)
+        and -90 <= lat <= 90
+        and -180 <= lon <= 180
+    )
