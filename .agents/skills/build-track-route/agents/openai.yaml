@@ -1,0 +1,4 @@
+interface:
+  display_name: "Build Track Route"
+  short_description: "Build and maintain the Track Route trip API"
+  default_prompt: "Use $build-track-route to implement the requested Track Route change using the project requirements, architecture, and phased build guide."
