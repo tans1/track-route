@@ -12,8 +12,6 @@ import socket
 import ssl
 import threading
 import time
-from datetime import datetime, timezone
-from email.utils import parsedate_to_datetime
 from http.client import HTTPException
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -22,6 +20,8 @@ from urllib.request import Request, urlopen
 from django.conf import settings
 from django.core.cache import caches
 
+from apps.common.metrics import provider_attempt
+from apps.common.providers import ProviderError, retry_delay
 
 logger = logging.getLogger(__name__)
 
@@ -30,45 +30,12 @@ class LocationNotFound(Exception):
     pass
 
 
-class ProviderError(Exception):
-    def __init__(
-        self,
-        message,
-        *,
-        status=503,
-        retry_after=None,
-        reason=None,
-        provider_status=None,
-    ):
-        super().__init__(message)
-        self.status = status
-        self.retry_after = retry_after
-        self.reason = reason or (
-            "provider_invalid_response" if status == 502 else "provider_unavailable"
-        )
-        self.provider_status = provider_status
-
-
 def normalize_query(value):
     if not isinstance(value, str) or not value.strip() or len(value) > 300:
         raise ValueError("Provide a location name or address of 1–300 characters.")
     if any(ord(char) < 32 and not char.isspace() for char in value):
         raise ValueError("Location must not contain control characters.")
     return " ".join(value.split())
-
-
-def retry_delay(value, default):
-    """Accept both seconds and HTTP dates in Retry-After."""
-    try:
-        return max(1, int(value))
-    except TypeError, ValueError:
-        try:
-            date = parsedate_to_datetime(value)
-            return max(
-                1, math.ceil((date - datetime.now(timezone.utc)).total_seconds())
-            )
-        except TypeError, ValueError, OverflowError:
-            return default
 
 
 def select_us_result(payload):
@@ -89,7 +56,7 @@ def select_us_result(payload):
             if isinstance(candidate.get("lat"), bool) or isinstance(
                 candidate.get("lon"), bool
             ):
-                raise ValueError
+                raise TypeError
             latitude, longitude = float(candidate["lat"]), float(candidate["lon"])
             label = candidate["display_name"]
             if (
@@ -193,7 +160,10 @@ class LocationResolver:
             },
         )
         try:
-            with urlopen(request, timeout=settings.NOMINATIM_TIMEOUT) as response:
+            with (
+                provider_attempt("nominatim"),
+                urlopen(request, timeout=settings.NOMINATIM_TIMEOUT) as response,
+            ):
                 body = response.read(1_000_001)
                 if len(body) > 1_000_000:
                     raise ProviderError(

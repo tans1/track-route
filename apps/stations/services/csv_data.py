@@ -7,7 +7,6 @@ import os
 import tempfile
 from pathlib import Path
 
-
 SOURCE_COLUMNS = (
     "OPIS Truckstop ID",
     "Truckstop Name",
@@ -41,7 +40,7 @@ def read_input(path):
                 raise ValueError(
                     f"CSV record {record}: field count differs from header"
                 )
-            rows.append(dict(zip(headers, values)))
+            rows.append(dict(zip(headers, values, strict=True)))
     return headers, rows
 
 

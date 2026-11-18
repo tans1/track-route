@@ -1,4 +1,4 @@
-"""JSON request and error responses shared by the public read-only endpoints."""
+"""JSON request parsing and error responses for the trip API."""
 
 import json
 
@@ -14,7 +14,7 @@ def error_response(code, message, status, *, field=None, **details):
     return JsonResponse({"error": error}, status=status)
 
 
-def read_json_post(request):
+def read_json_post(request, *, parse_float=float):
     if request.method != "POST":
         response = error_response(
             "method_not_allowed", "Use POST with a JSON body.", 405
@@ -29,7 +29,7 @@ def read_json_post(request):
         body = request.body
         if len(body) > 8192:
             raise RequestDataTooBig
-        return json.loads(body), None
+        return json.loads(body, parse_float=parse_float), None
     except RequestDataTooBig:
         return None, error_response(
             "payload_too_large", "Request body must be at most 8 KB.", 413

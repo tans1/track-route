@@ -6,18 +6,17 @@ import json
 import time
 import uuid
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from apps.fuel_prices.services.csv_data import (
+from apps.stations.services.csv_data import (
     atomic_json,
     atomic_write,
     fingerprint,
     read_input,
 )
-from apps.fuel_prices.services.geo_utils import US_CODES, city_key, coordinates
-
+from apps.stations.services.geo_utils import US_CODES, city_key, coordinates
 
 ENDPOINT = "https://geocoding.geo.census.gov/geocoder/locations/addressbatch"
 
@@ -57,7 +56,7 @@ def parse_response(text, addresses):
             "status": "unresolved",
             "provider": "us_census_batch",
             "reason": indicator,
-            "geocoded_at": datetime.now(timezone.utc).isoformat(),
+            "geocoded_at": datetime.now(UTC).isoformat(),
         }
         if indicator == "Match":
             if len(fields) != 8:
@@ -109,7 +108,7 @@ def submit_batch(addresses, benchmark):
         'Content-Disposition: form-data; name="addressFile"; filename="addresses.csv"\r\n'
         "Content-Type: text/csv; charset=utf-8\r\n\r\n"
         f"{batch_csv(addresses)}\r\n--{boundary}--\r\n"
-    ).encode("utf-8")
+    ).encode()
     request = Request(
         ENDPOINT,
         data=body,
@@ -230,7 +229,7 @@ def run_batch_export(
                 stream, fieldnames=[*headers, "latitude", "longitude"]
             )
             writer.writeheader()
-            for row, result in zip(rows, results):
+            for row, result in zip(rows, results, strict=True):
                 writer.writerow(
                     {
                         **row,

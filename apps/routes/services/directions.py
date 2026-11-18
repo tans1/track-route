@@ -8,28 +8,35 @@ import socket
 import ssl
 import threading
 import time
+from fractions import Fraction
 from http.client import HTTPException
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from django.conf import settings
 from django.core.cache import caches
 
-from apps.locations.services.geocoding import retry_delay
+from apps.common.metrics import provider_attempt
+from apps.common.providers import ProviderError, retry_delay
 
 logger = logging.getLogger(__name__)
 MAX_RESPONSE_BYTES = 10 * 1024 * 1024
 
 
-class RoutingError(Exception):
-    def __init__(
-        self, message, *, reason, status=503, retry_after=None, provider_status=None
-    ):
-        super().__init__(message)
-        self.reason = reason
-        self.status = status
-        self.retry_after = retry_after
-        self.provider_status = provider_status
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # A route lookup makes one HTTP attempt. Redirect following could add
+        # another request and forward credentials to a different endpoint.
+        return None
+
+
+# Keep this boundary patchable in provider tests. Every invocation performs at
+# most one HTTP attempt: no redirect handling and no automatic retry loop.
+urlopen = build_opener(_NoRedirect()).open
+
+
+class RoutingError(ProviderError):
+    """Directions provider failure with an HTTP-facing reason and retry delay."""
 
 
 def normalize_position(position):
@@ -110,7 +117,56 @@ def route_cache_key(endpoint, profile, body):
         separators=(",", ":"),
         allow_nan=False,
     )
-    return "route:v1:" + hashlib.sha256(canonical.encode()).hexdigest()
+    return "route:v2:" + hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _metric(value):
+    if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+        raise ValueError("Route metrics must be finite nonnegative numbers.")
+    return Fraction(str(value))
+
+
+def _validate_segments(properties, way_points):
+    segments = properties["segments"]
+    if not isinstance(segments, list) or len(segments) != len(way_points) - 1:
+        raise ValueError("Each consecutive waypoint pair needs a route segment.")
+    totals = {"distance": Fraction(), "duration": Fraction()}
+    for index, segment in enumerate(segments):
+        start, end = way_points[index : index + 2]
+        for name in totals:
+            value = _metric(segment[name])
+            totals[name] += value
+            if start == end and value != 0:
+                raise ValueError("Coincident waypoint indices require a zero segment.")
+        if "way_points" in segment:
+            indices = segment["way_points"]
+            if (
+                not isinstance(indices, list)
+                or any(type(value) is not int for value in indices)
+                or indices != [start, end]
+            ):
+                raise ValueError("Segment indices do not match their waypoint pair.")
+        if "steps" in segment:
+            if not isinstance(segment["steps"], list):
+                raise TypeError("Segment steps must be a list.")
+            for step in segment["steps"]:
+                if not isinstance(step, dict):
+                    raise TypeError("Route steps must be objects.")
+                if "way_points" in step:
+                    indices = step["way_points"]
+                    if (
+                        not isinstance(indices, list)
+                        or len(indices) != 2
+                        or any(type(value) is not int for value in indices)
+                        or not start <= indices[0] <= indices[1] <= end
+                    ):
+                        raise ValueError("Step indices leave their route segment.")
+    # ORS rounds individual segment and summary metrics to decimal precision.
+    # This is response consistency tolerance, never a fuel-reachability epsilon.
+    tolerance = Fraction(len(segments), 10)
+    for name, total in totals.items():
+        if abs(total - _metric(properties["summary"][name])) > tolerance:
+            raise ValueError("Route summary does not match its segment totals.")
 
 
 def validate_geojson(payload):
@@ -140,13 +196,7 @@ def validate_geojson(payload):
                     raise ValueError
             properties = feature["properties"]
             for name in ("distance", "duration"):
-                value = properties["summary"][name]
-                if (
-                    type(value) not in (int, float)
-                    or not math.isfinite(value)
-                    or value < 0
-                ):
-                    raise ValueError
+                _metric(properties["summary"][name])
             way_points = properties["way_points"]
             if (
                 not isinstance(way_points, list)
@@ -155,6 +205,7 @@ def validate_geojson(payload):
                 or way_points != [0, len(coordinates) - 1]
             ):
                 raise ValueError
+            _validate_segments(properties, way_points)
         if not isinstance(payload.get("metadata"), dict):
             raise TypeError
         json.dumps(payload, allow_nan=False)
@@ -183,6 +234,7 @@ class DirectionsClient:
         return key
 
     def route(self, start, destination, *, profile="driving-car", options=None):
+        """Fetch only the initial endpoint route; station planning stays local."""
         profile = validate_profile(profile)
         body = {
             "coordinates": [normalize_position(start), normalize_position(destination)],
@@ -237,7 +289,10 @@ class DirectionsClient:
             },
         )
         try:
-            with urlopen(request, timeout=settings.ORS_TIMEOUT) as response:
+            with (
+                provider_attempt("ors"),
+                urlopen(request, timeout=settings.ORS_TIMEOUT) as response,
+            ):
                 raw = response.read(MAX_RESPONSE_BYTES + 1)
                 if len(raw) > MAX_RESPONSE_BYTES:
                     raise RoutingError(
@@ -260,12 +315,14 @@ class DirectionsClient:
                     status=422,
                     provider_status=exc.code,
                 ) from exc
+
             if exc.code in (401, 403):
                 raise RoutingError(
                     "ORS rejected the server API key or its permissions.",
                     reason="provider_auth_error",
                     provider_status=exc.code,
                 ) from exc
+
             if exc.code in (400, 413, 422):
                 raise RoutingError(
                     "ORS could not route these locations with the supplied options.",
@@ -273,18 +330,21 @@ class DirectionsClient:
                     status=422,
                     provider_status=exc.code,
                 ) from exc
+
             delay = retry_delay(
                 exc.headers.get("Retry-After"), 60 if exc.code == 429 else 5
             )
             reason = (
                 "provider_rate_limited" if exc.code == 429 else "provider_http_error"
             )
+
             raise RoutingError(
                 f"ORS returned HTTP {exc.code}.",
                 reason=reason,
                 retry_after=delay,
                 provider_status=exc.code,
             ) from exc
+
         except (URLError, TimeoutError, OSError, HTTPException) as exc:
             cause = exc.reason if isinstance(exc, URLError) else exc
             if isinstance(cause, TimeoutError):
@@ -308,6 +368,7 @@ class DirectionsClient:
                     "Could not connect to ORS.",
                 )
             raise RoutingError(message, reason=reason, retry_after=5) from exc
+
         except (ValueError, UnicodeError, RecursionError) as exc:
             raise RoutingError(
                 "ORS returned invalid JSON.",

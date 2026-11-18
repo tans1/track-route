@@ -1,8 +1,23 @@
 [project]
 name = "track-route"
 version = "0.1.0"
+description = "A database-free Django API for US routes and cost-effective fuel stops"
+readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "django>=6.1.3",
+    "pyproj>=3.8.0",
+    "shapely>=2.2.0",
+]
+
+[dependency-groups]
+dev = [
     "ruff>=0.17.5",
 ]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B", "SIM"]

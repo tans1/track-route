@@ -1,0 +1,97 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <title>{{ plan.start.query }} to {{ plan.destination.query }} · Track Route</title>
+  <link rel="stylesheet" href="{% static 'fuel_planning/vendor/leaflet/leaflet.css' %}">
+  <link rel="stylesheet" href="{% static 'fuel_planning/map.css' %}">
+  <script defer src="{% static 'fuel_planning/vendor/leaflet/leaflet.js' %}"></script>
+  <script defer src="{% static 'fuel_planning/map.js' %}"></script>
+</head>
+<body>
+  <header class="site-header">
+    <span class="brand"><span class="brand-mark" aria-hidden="true">↗</span> Track Route</span>
+    
+  </header>
+  <main class="trip-layout">
+    <aside class="trip-panel" aria-label="Trip and fuel plan">
+      <div class="panel-intro">
+        <p class="eyebrow">YOUR TRIP</p>
+        <h1>{{ plan.start.query }} <span aria-label="to">→</span> {{ plan.destination.query }}</h1>
+        {% if plan.quality.search_complete %}
+          <p class="plan-state"><span aria-hidden="true">●</span> Lowest fuel cost within this model</p>
+        {% else %}
+          <p class="plan-state incomplete">Feasible plan · search incomplete</p>
+          <p class="small-note">The search reached its limit. A lower-cost plan may exist.</p>
+        {% endif %}
+        <div class="cost-block">
+          <p class="cost-label">Fuel to buy</p>
+          <p class="trip-cost" id="fuel-cost">${{ plan.totals.fuel_purchase_cost }} <span>USD</span></p>
+          <p class="small-note">Starting fuel is already paid for.</p>
+        </div>
+        <dl class="trip-stats">
+          <div><dt>Modeled distance</dt><dd>{{ plan.totals.modeled_distance_miles }} <span>mi</span></dd></div>
+          <div><dt>Fuel stops</dt><dd>{{ plan.stops|length }}</dd></div>
+          <div><dt>Fuel to buy</dt><dd>{{ plan.totals.gallons_purchased|floatformat:2 }} <span>gal</span></dd></div>
+          <div><dt>Starting fuel</dt><dd>{{ plan.totals.initial_fuel_gallons|floatformat:2 }} <span>gal</span></dd></div>
+        </dl>
+      </div>
+      <section class="stops-section" aria-labelledby="stops-heading">
+        <div class="section-heading"><h2 id="stops-heading">Your fuel stops</h2><span>In driving order</span></div>
+        {% if plan.stops %}
+          <ol class="stop-list">
+          {% for stop in plan.stops %}
+            <li>
+              <button class="stop-button" type="button" data-stop-order="{{ stop.order }}" aria-label="Show stop {{ stop.order }}: {{ stop.name|default:stop.station_id }} on map">
+                <span class="stop-number" aria-hidden="true">{{ stop.order }}</span>
+                <span class="stop-content">
+                  <strong>{{ stop.name|default:stop.station_id }}</strong>
+                  <span class="stop-place">{{ stop.city }}{% if stop.city and stop.state %}, {% endif %}{{ stop.state }}</span>
+                  <span class="stop-purchase">{{ stop.gallons_purchased|floatformat:2 }} gal × ${{ stop.price_per_gallon }}/gal <b>${{ stop.purchase_cost }}</b></span>
+                  {% if stop.coordinate_quality == 'representative_place_internal_point' %}<span class="approximate-label">Approximate city location</span>{% else %}<span class="location-note">Estimated station access</span>{% endif %}
+                </span>
+              </button>
+            </li>
+          {% endfor %}
+          </ol>
+        {% else %}
+          <div class="empty-stops"><strong>You have enough fuel.</strong><p>Continue to your destination. No fuel purchases are needed.</p></div>
+        {% endif %}
+        {% if plan.totals.stop_cost_rounding_adjustment != '0.00' %}
+          <p class="rounding-note">Total rounding adjustment: ${{ plan.totals.stop_cost_rounding_adjustment }}. Total cost uses unrounded purchases.</p>
+        {% endif %}
+      </section>
+      <section class="assumptions" aria-labelledby="assumptions-heading">
+        <h2 id="assumptions-heading">About this estimate</h2>
+        <p>10 mpg · 50-gallon tank · 500-mile maximum range. Fuel prices are treated as USD per US gallon.</p>
+        <p>Station access is assumed. Dashed lines show estimated detours and are included in fuel use. City-based coordinates may not mark the station entrance.</p>
+        <details><summary>Fuel and distance details</summary>
+          <dl class="detail-stats">
+            <div><dt>Original route</dt><dd>{{ plan.totals.baseline_route_miles }} mi</dd></div>
+            {% if plan.route_duration %}<div><dt>Driving time before detours</dt><dd>{{ plan.route_duration }}</dd></div>{% endif %}
+            <div><dt>Fuel consumed</dt><dd>{{ plan.totals.gallons_consumed|floatformat:2 }} gal</dd></div>
+            <div><dt>Fuel at destination</dt><dd>{{ plan.totals.final_fuel_gallons|floatformat:2 }} gal</dd></div>
+          </dl>
+        </details>
+      </section>
+      <footer class="data-credit">Routing by <a href="https://openrouteservice.org/">openrouteservice</a> · Station coordinates from <a href="https://www.census.gov/">US Census</a> · Geocoding © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a></footer>
+    </aside>
+    <section class="map-panel" aria-label="Driving route map">
+      <div class="map-toolbar"><div><h2>Route overview</h2><span>Start to destination, with planned fuel stops</span></div><button id="fit-route" type="button">Fit route <span aria-hidden="true">↗</span></button></div>
+      <div class="map-wrap">
+        <div id="route-map" aria-label="Map of the driving route and fuel stops"></div>
+        <p id="map-status" class="map-status" role="status">Loading your map…</p>
+        <div class="map-legend" aria-label="Map legend"><span><i class="route-swatch"></i>Driving route</span><span><i class="access-swatch"></i>Estimated station access</span></div>
+      </div>
+      <div class="map-footer"><span>Map links are temporary and expire within one hour.</span><a href="https://www.openstreetmap.org/fixthemap">Report a map issue ↗</a></div>
+      <noscript><p class="map-noscript">Enable JavaScript to view the interactive map. Your fuel plan is listed alongside it.</p></noscript>
+    </section>
+  </main>
+  {{ plan|json_script:"trip-plan" }}
+  {{ tile_url|json_script:"tile-url" }}
+  {{ tile_attribution|json_script:"tile-attribution" }}
+</body>
+</html>

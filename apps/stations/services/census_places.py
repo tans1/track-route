@@ -1,19 +1,19 @@
-"""City fallbacks from the US Census national places gazetteer.
-
-INTPTLAT/INTPTLONG are representative internal points of Census places, not
-station locations. Municipal suffix removal is the only alias transformation.
-"""
+"""City fallbacks from the US Census national places gazetteer."""
 
 import csv
 import io
 import math
+import os
 import re
+import shutil
 import zipfile
 from collections import defaultdict
 from pathlib import Path
+from urllib.request import Request, urlopen
 
-from apps.fuel_prices.services.geo_utils import US_CODES, city_key
+from apps.stations.services.geo_utils import US_CODES, city_key
 
+GAZETTEER_URL = "https://www2.census.gov/geo/docs/maps-data/data/gazetteer/2025_Gazetteer/2025_Gaz_place_national.zip"
 
 MUNICIPAL_SUFFIXES = (
     "consolidated government (balance)",
@@ -39,10 +39,7 @@ SUFFIX = re.compile(
 
 
 def place_name(name: str) -> str:
-    """Remove a terminal Census descriptor, preserving names such as Carson City.
-
-    Census descriptors are lower case except CDP; case matters at this stage.
-    """
+    """Remove a terminal Census descriptor, preserving names such as Carson City."""
     return SUFFIX.sub("", name.strip())
 
 
@@ -146,3 +143,32 @@ class CensusPlaces:
             "reason": "unique_census_place",
             "coordinate_kind": "representative_place_internal_point",
         }
+
+
+def load_census_places(path, offline):
+    """Load the local Census Places ZIP, downloading it atomically if allowed."""
+    if not path.exists():
+        if offline:
+            raise ValueError("City gazetteer is missing")
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        partial = Path(str(path) + ".part")
+
+        try:
+            with (
+                urlopen(
+                    Request(
+                        GAZETTEER_URL,
+                        headers={"User-Agent": "TrackRouteCensusBatch/1.0"},
+                    ),
+                    timeout=60,
+                ) as response,
+                partial.open("wb") as stream,
+            ):
+                shutil.copyfileobj(response, stream)
+            if not zipfile.is_zipfile(partial):
+                raise ValueError("Census city download is not a ZIP archive")
+            os.replace(partial, path)
+        finally:
+            partial.unlink(missing_ok=True)
+    return CensusPlaces(path)
